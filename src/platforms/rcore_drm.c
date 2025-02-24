@@ -29,7 +29,7 @@
 *
 *   LICENSE: zlib/libpng
 *
-*   Copyright (c) 2013-2024 Ramon Santamaria (@raysan5) and contributors
+*   Copyright (c) 2013-2025 Ramon Santamaria (@raysan5) and contributors
 *
 *   This software is provided "as-is", without any express or implied warranty. In no event
 *   will the authors be held liable for any damages arising from the use of this software.
@@ -206,7 +206,7 @@ static const short linuxToRaylibMap[KEYMAP_SIZE] = {
     [BTN_TL] = GAMEPAD_BUTTON_LEFT_TRIGGER_1,
     [BTN_TL2] = GAMEPAD_BUTTON_LEFT_TRIGGER_2,
     [BTN_TR] = GAMEPAD_BUTTON_RIGHT_TRIGGER_1,
-    [BTN_TR2] GAMEPAD_BUTTON_RIGHT_TRIGGER_2,
+    [BTN_TR2] = GAMEPAD_BUTTON_RIGHT_TRIGGER_2,
     [BTN_SELECT] = GAMEPAD_BUTTON_MIDDLE_LEFT,
     [BTN_MODE] = GAMEPAD_BUTTON_MIDDLE,
     [BTN_START] = GAMEPAD_BUTTON_MIDDLE_RIGHT,
@@ -398,7 +398,7 @@ int GetMonitorWidth(int monitor)
     {
         width = platform.connector->modes[platform.modeIndex].hdisplay;
     }
-    
+
     return width;
 }
 
@@ -415,7 +415,7 @@ int GetMonitorHeight(int monitor)
     {
         height = platform.connector->modes[platform.modeIndex].vdisplay;
     }
-    
+
     return height;
 }
 
@@ -479,7 +479,7 @@ const char *GetMonitorName(int monitor)
     {
         name = platform.connector->modes[platform.modeIndex].name;
     }
-    
+
     return name;
 }
 
@@ -507,6 +507,16 @@ const char *GetClipboardText(void)
 {
     TRACELOG(LOG_WARNING, "GetClipboardText() not implemented on target platform");
     return NULL;
+}
+
+// Get clipboard image
+Image GetClipboardImage(void)
+{
+    Image image = { 0 };
+
+    TRACELOG(LOG_WARNING, "GetClipboardImage() not implemented on target platform");
+
+    return image;
 }
 
 // Show mouse cursor
@@ -610,9 +620,9 @@ int SetGamepadMappings(const char *mappings)
 }
 
 // Set gamepad vibration
-void SetGamepadVibration(int gamepad, float leftMotor, float rightMotor)
+void SetGamepadVibration(int gamepad, float leftMotor, float rightMotor, float duration)
 {
-    TRACELOG(LOG_WARNING, "GamepadSetVibration() not implemented on target platform");
+    TRACELOG(LOG_WARNING, "SetGamepadVibration() not implemented on target platform");
 }
 
 // Set mouse position XY
@@ -626,6 +636,13 @@ void SetMousePosition(int x, int y)
 void SetMouseCursor(int cursor)
 {
     TRACELOG(LOG_WARNING, "SetMouseCursor() not implemented on target platform");
+}
+
+// Get physical key name.
+const char *GetKeyName(int key)
+{
+    TRACELOG(LOG_WARNING, "GetKeyName() not implemented on target platform");
+    return "";
 }
 
 // Register all input events
@@ -757,7 +774,9 @@ int InitPlatform(void)
         drmModeConnector *con = drmModeGetConnector(platform.fd, res->connectors[i]);
         TRACELOG(LOG_TRACE, "DISPLAY: Connector modes detected: %i", con->count_modes);
 
-        if ((con->connection == DRM_MODE_CONNECTED) && (con->encoder_id))
+        // In certain cases the status of the conneciton is reported as UKNOWN, but it is still connected.
+        // This might be a hardware or software limitation like on Raspberry Pi Zero with composite output.
+        if (((con->connection == DRM_MODE_CONNECTED) || (con->connection == DRM_MODE_UNKNOWNCONNECTION)) && (con->encoder_id))
         {
             TRACELOG(LOG_TRACE, "DISPLAY: DRM mode connected");
             platform.connector = con;
@@ -879,10 +898,9 @@ int InitPlatform(void)
         TRACELOG(LOG_INFO, "DISPLAY: Trying to enable MSAA x4");
     }
 
-    const EGLint framebufferAttribs[] =
-    {
-        EGL_RENDERABLE_TYPE, (rlGetVersion() == RL_OPENGL_ES_30)? EGL_OPENGL_ES3_BIT : EGL_OPENGL_ES2_BIT,      // Type of context support
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,          // Don't use it on Android!
+    const EGLint framebufferAttribs[] = {
+        EGL_RENDERABLE_TYPE, (rlGetVersion() == RL_OPENGL_ES_30)? EGL_OPENGL_ES3_BIT : EGL_OPENGL_ES2_BIT, // Type of context support
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT, // Don't use it on Android!
         EGL_RED_SIZE, 8,            // RED color bit depth (alternative: 5)
         EGL_GREEN_SIZE, 8,          // GREEN color bit depth (alternative: 6)
         EGL_BLUE_SIZE, 8,           // BLUE color bit depth (alternative: 5)
@@ -890,7 +908,7 @@ int InitPlatform(void)
         //EGL_TRANSPARENT_TYPE, EGL_NONE, // Request transparent framebuffer (EGL_TRANSPARENT_RGB does not work on RPI)
         EGL_DEPTH_SIZE, 16,         // Depth buffer size (Required to use Depth testing!)
         //EGL_STENCIL_SIZE, 8,      // Stencil buffer size
-        EGL_SAMPLE_BUFFERS, sampleBuffer,    // Activate MSAA
+        EGL_SAMPLE_BUFFERS, sampleBuffer, // Activate MSAA
         EGL_SAMPLES, samples,       // 4x Antialiasing if activated (Free on MALI GPUs)
         EGL_NONE
     };
@@ -1028,7 +1046,7 @@ int InitPlatform(void)
 
     // If graphic device is no properly initialized, we end program
     if (!CORE.Window.ready) { TRACELOG(LOG_FATAL, "PLATFORM: Failed to initialize graphic device"); return -1; }
-    else SetWindowPosition(GetMonitorWidth(GetCurrentMonitor()) / 2 - CORE.Window.screen.width / 2, GetMonitorHeight(GetCurrentMonitor()) / 2 - CORE.Window.screen.height / 2);
+    else SetWindowPosition(GetMonitorWidth(GetCurrentMonitor())/2 - CORE.Window.screen.width/2, GetMonitorHeight(GetCurrentMonitor())/2 - CORE.Window.screen.height/2);
 
     // Set some default window flags
     CORE.Window.flags &= ~FLAG_WINDOW_HIDDEN;       // false
@@ -1136,7 +1154,8 @@ void ClosePlatform(void)
 
     // Close the evdev devices
 
-    if (platform.mouseFd != -1) {
+    if (platform.mouseFd != -1)
+    {
         close(platform.mouseFd);
         platform.mouseFd = -1;
     }
@@ -1470,7 +1489,6 @@ static void ConfigureEvdevDevice(char *device)
             TEST_BIT(keyBits, BTN_MOUSE)) isMouse = true;
     }
 
-
     if (TEST_BIT(evBits, EV_KEY))
     {
         // The first 32 keys as defined in input-event-codes.h are pretty much
@@ -1510,7 +1528,7 @@ static void ConfigureEvdevDevice(char *device)
             platform.absRange.height = absinfo[ABS_Y].info.maximum - absinfo[ABS_Y].info.minimum;
         }
     }
-    else if (isGamepad && !isMouse && !isKeyboard && platform.gamepadCount < MAX_GAMEPADS)
+    else if (isGamepad && !isMouse && !isKeyboard && (platform.gamepadCount < MAX_GAMEPADS))
     {
         deviceKindStr = "gamepad";
         int index = platform.gamepadCount++;
@@ -1613,7 +1631,7 @@ static void PollKeyboardEvents(void)
                     }
                 }
 
-                TRACELOG(LOG_DEBUG, "INPUT: KEY_%s Keycode(linux): %4i KeyCode(raylib): %4i", (event.value == 0) ? "UP  " : "DOWN", event.code, keycode);
+                TRACELOG(LOG_DEBUG, "INPUT: KEY_%s Keycode(linux): %4i KeyCode(raylib): %4i", (event.value == 0)? "UP  " : "DOWN", event.code, keycode);
             }
         }
     }
@@ -1640,7 +1658,7 @@ static void PollGamepadEvents(void)
                 {
                     short keycodeRaylib = linuxToRaylibMap[event.code];
 
-                    TRACELOG(LOG_DEBUG, "INPUT: Gamepad %2i: KEY_%s Keycode(linux): %4i Keycode(raylib): %4i", i, (event.value == 0) ? "UP  " : "DOWN", event.code, keycodeRaylib);
+                    TRACELOG(LOG_DEBUG, "INPUT: Gamepad %2i: KEY_%s Keycode(linux): %4i Keycode(raylib): %4i", i, (event.value == 0)? "UP" : "DOWN", event.code, keycodeRaylib);
 
                     if ((keycodeRaylib != 0) && (keycodeRaylib < MAX_GAMEPAD_BUTTONS))
                     {
@@ -1665,7 +1683,7 @@ static void PollGamepadEvents(void)
                         int range = platform.gamepadAbsAxisRange[i][event.code][1];
 
                         // NOTE: Scaling of event.value to get values between -1..1
-                        CORE.Input.Gamepad.axisState[i][axisRaylib] = (2 * (float)(event.value - min) / range) - 1;
+                        CORE.Input.Gamepad.axisState[i][axisRaylib] = (2*(float)(event.value - min)/range) - 1;
                     }
                 }
             }
@@ -1874,7 +1892,7 @@ static int FindExactConnectorMode(const drmModeConnector *connector, uint width,
 
         TRACELOG(LOG_TRACE, "DISPLAY: DRM Mode %d %ux%u@%u %s", i, mode->hdisplay, mode->vdisplay, mode->vrefresh, (mode->flags & DRM_MODE_FLAG_INTERLACE)? "interlaced" : "progressive");
 
-        if ((mode->flags & DRM_MODE_FLAG_INTERLACE) && (!allowInterlaced)) continue;
+        if ((mode->flags & DRM_MODE_FLAG_INTERLACE) && !allowInterlaced) continue;
 
         if ((mode->hdisplay == width) && (mode->vdisplay == height) && (mode->vrefresh == fps)) return i;
     }
@@ -1904,7 +1922,7 @@ static int FindNearestConnectorMode(const drmModeConnector *connector, uint widt
             continue;
         }
 
-        if ((mode->flags & DRM_MODE_FLAG_INTERLACE) && (!allowInterlaced))
+        if ((mode->flags & DRM_MODE_FLAG_INTERLACE) && !allowInterlaced)
         {
             TRACELOG(LOG_TRACE, "DISPLAY: DRM shouldn't choose an interlaced mode");
             continue;
@@ -1924,9 +1942,7 @@ static int FindNearestConnectorMode(const drmModeConnector *connector, uint widt
         const int nearestHeightDiff = abs(platform.connector->modes[nearestIndex].vdisplay - height);
         const int nearestFpsDiff = abs(platform.connector->modes[nearestIndex].vrefresh - fps);
 
-        if ((widthDiff < nearestWidthDiff) || (heightDiff < nearestHeightDiff) || (fpsDiff < nearestFpsDiff)) {
-            nearestIndex = i;
-        }
+        if ((widthDiff < nearestWidthDiff) || (heightDiff < nearestHeightDiff) || (fpsDiff < nearestFpsDiff)) nearestIndex = i;
     }
 
     return nearestIndex;
